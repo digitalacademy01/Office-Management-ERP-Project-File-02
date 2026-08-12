@@ -21,6 +21,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ClearIcon from '@mui/icons-material/Clear';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
@@ -44,6 +45,7 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAudit } from '../../lib/audit';
 import { format } from 'date-fns';
+import FileViewDialog from '../../components/files/FileViewDialog';
 
 const STATUS_OPTIONS = ['all', 'available', 'in_use', 'sent_outside', 'archived', 'missing'];
 
@@ -78,6 +80,9 @@ export default function FilesPage() {
   const [fyFilter, setFyFilter] = useState('all');
   const [cabinetFilter, setCabinetFilter] = useState('all');
   const [holderFilter, setHolderFilter] = useState('all');
+  const [shelfFilter, setShelfFilter] = useState('all');
+  const [drawerFilter, setDrawerFilter] = useState('all');
+  const [rackFilter, setRackFilter] = useState('all');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -89,13 +94,15 @@ export default function FilesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState(defaultForm);
+  const [viewFileId, setViewFileId] = useState<string | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
 
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager';
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
     let query = supabase.from('physical_files')
-      .select('*, client:clients(client_name,client_id), cabinet:cabinets(cabinet_name), current_holder:employees(full_name)', { count: 'exact' })
+      .select('*, client:clients(client_name,client_id), cabinet:cabinets(cabinet_name,cabinet_number), current_holder:employees(full_name)', { count: 'exact' })
       .eq('is_deleted', false)
       .order('created_at', { ascending: false })
       .range(page * rowsPerPage, (page + 1) * rowsPerPage - 1);
@@ -107,11 +114,14 @@ export default function FilesPage() {
     if (holderFilter !== 'all') query = query.eq('current_holder_id', holderFilter);
     if (search) query = query.or(`file_name.ilike.%${search}%,file_id.ilike.%${search}%,file_number.ilike.%${search}%`);
     if (subjectSearch) query = query.ilike('file_subject', `%${subjectSearch}%`);
+    if (shelfFilter !== 'all') query = query.eq('shelf', shelfFilter);
+    if (drawerFilter !== 'all') query = query.eq('drawer', drawerFilter);
+    if (rackFilter !== 'all') query = query.eq('rack', rackFilter);
     const { data, count } = await query;
     setFiles((data as PhysicalFile[]) ?? []);
     setTotal(count ?? 0);
     setLoading(false);
-  }, [page, rowsPerPage, search, subjectSearch, statusFilter, clientFilter, ayFilter, fyFilter, cabinetFilter, holderFilter]);
+  }, [page, rowsPerPage, search, subjectSearch, statusFilter, clientFilter, ayFilter, fyFilter, cabinetFilter, holderFilter, shelfFilter, drawerFilter, rackFilter]);
 
   useEffect(() => { loadFiles(); }, [loadFiles]);
 
@@ -141,6 +151,7 @@ export default function FilesPage() {
 
   async function handleSave() {
     if (!form.file_name.trim()) { setError('File name is required.'); return; }
+    if (!form.cabinet_id) { setError('Cabinet selection is required.'); return; }
     if (form.file_subject && form.file_subject.trim().length > 200) { setError('File Subject must be 200 characters or fewer.'); return; }
     setSaving(true);
     setError('');
@@ -155,17 +166,20 @@ export default function FilesPage() {
         current_holder_id: form.current_holder_id || null,
       };
       if (editFile) {
-        await supabase.from('physical_files').update({ ...payload, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', editFile.id);
+        const { error: updateError } = await supabase.from('physical_files').update({ ...payload, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', editFile.id);
+        if (updateError) throw updateError;
         await logAudit({ action: 'UPDATE', module: 'files', record_id: editFile.id, record_display: form.file_name }, user?.id, profile?.full_name);
       } else {
         const fileId = `FL${Date.now().toString().slice(-6)}`;
-        const { data } = await supabase.from('physical_files').insert({ ...payload, file_id: fileId, created_by: user?.id, updated_by: user?.id }).select().single();
+        const { data, error: insertError } = await supabase.from('physical_files').insert({ ...payload, file_id: fileId, created_by: user?.id, updated_by: user?.id }).select().single();
+        if (insertError) throw insertError;
         await logAudit({ action: 'CREATE', module: 'files', record_id: (data as PhysicalFile)?.id, record_display: form.file_name }, user?.id, profile?.full_name);
       }
       setDialogOpen(false);
       loadFiles();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      setError(msg);
     } finally {
       setSaving(false);
     }
@@ -188,10 +202,13 @@ export default function FilesPage() {
     setFyFilter('all');
     setCabinetFilter('all');
     setHolderFilter('all');
+    setShelfFilter('all');
+    setDrawerFilter('all');
+    setRackFilter('all');
     setPage(0);
   }
 
-  const hasActiveFilters = search || subjectSearch || statusFilter !== 'all' || clientFilter !== 'all' || ayFilter !== 'all' || fyFilter !== 'all' || cabinetFilter !== 'all' || holderFilter !== 'all';
+  const hasActiveFilters = search || subjectSearch || statusFilter !== 'all' || clientFilter !== 'all' || ayFilter !== 'all' || fyFilter !== 'all' || cabinetFilter !== 'all' || holderFilter !== 'all' || shelfFilter !== 'all' || drawerFilter !== 'all' || rackFilter !== 'all';
 
   return (
     <Box sx={{ pb: { xs: 10, md: 0 } }}>
@@ -235,11 +252,15 @@ export default function FilesPage() {
             </TextField>
             <TextField select value={cabinetFilter} onChange={e => { setCabinetFilter(e.target.value); setPage(0); }} size="small" label="Cabinet" sx={{ minWidth: 140 }}>
               <MenuItem value="all">All Cabinets</MenuItem>
-              {cabinets.map(c => <MenuItem key={c.id} value={c.id}>{c.cabinet_name}</MenuItem>)}
+              {cabinets.map(c => <MenuItem key={c.id} value={c.id}>{c.cabinet_number ? `Cabinet ${c.cabinet_number}` : c.cabinet_name}</MenuItem>)}
             </TextField>
             <TextField select value={holderFilter} onChange={e => { setHolderFilter(e.target.value); setPage(0); }} size="small" label="Holder" sx={{ minWidth: 140 }}>
               <MenuItem value="all">All Holders</MenuItem>
               {employees.map(e => <MenuItem key={e.id} value={e.id}>{e.full_name}</MenuItem>)}
+            </TextField>
+            <TextField value={shelfFilter === 'all' ? '' : shelfFilter} onChange={e => { setShelfFilter(e.target.value || 'all'); setPage(0); }} size="small" label="Shelf" sx={{ minWidth: 100 }} placeholder="All" />
+            <TextField value={drawerFilter === 'all' ? '' : drawerFilter} onChange={e => { setDrawerFilter(e.target.value || 'all'); setPage(0); }} size="small" label="Drawer" sx={{ minWidth: 100 }} placeholder="All" />
+            <TextField value={rackFilter === 'all' ? '' : rackFilter} onChange={e => { setRackFilter(e.target.value || 'all'); setPage(0); }} size="small" label="Rack" sx={{ minWidth: 100 }} placeholder="All" />
             </TextField>
             {hasActiveFilters && (
               <Button startIcon={<ClearIcon />} onClick={clearFilters} size="small" sx={{ alignSelf: 'center', whiteSpace: 'nowrap' }}>Clear Filters</Button>
@@ -267,14 +288,17 @@ export default function FilesPage() {
                     {f.assessment_year ? ` · AY ${f.assessment_year}` : ''}
                     {f.financial_year ? ` · FY ${f.financial_year}` : ''}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">{(f.cabinet as { cabinet_name: string } | undefined)?.cabinet_name ?? '-'}{f.shelf ? ` / Shelf ${f.shelf}` : ''}</Typography>
+                  <Typography variant="caption" color="text.secondary">{(f.cabinet as { cabinet_name: string; cabinet_number?: string } | undefined) ? ((f.cabinet as { cabinet_number?: string }).cabinet_number ? `Cabinet ${(f.cabinet as { cabinet_number?: string }).cabinet_number}` : (f.cabinet as { cabinet_name: string }).cabinet_name) : '-'}{f.shelf ? ` / Shelf ${f.shelf}` : ''}</Typography>
                 </CardContent>
-                {canEdit && (
-                  <CardActions onClick={(e) => e.stopPropagation()}>
-                    <IconButton size="small" onClick={() => openEdit(f)}><EditIcon fontSize="small" /></IconButton>
-                    <IconButton size="small" color="error" onClick={() => setDeleteDialog({ open: true, file: f })}><DeleteIcon fontSize="small" /></IconButton>
-                  </CardActions>
-                )}
+                <CardActions onClick={(e) => e.stopPropagation()}>
+                  <IconButton size="small" onClick={() => { setViewFileId(f.id); setViewOpen(true); }}><VisibilityIcon fontSize="small" /></IconButton>
+                  {canEdit && (
+                    <>
+                      <IconButton size="small" onClick={() => openEdit(f)}><EditIcon fontSize="small" /></IconButton>
+                      <IconButton size="small" color="error" onClick={() => setDeleteDialog({ open: true, file: f })}><DeleteIcon fontSize="small" /></IconButton>
+                    </>
+                  )}
+                </CardActions>
               </Card>
             ))}
           {total > rowsPerPage && (
@@ -303,12 +327,12 @@ export default function FilesPage() {
               <TableCell>Shelf</TableCell>
               <TableCell>Current Holder</TableCell>
               <TableCell>Last Moved</TableCell>
-              {canEdit && <TableCell align="right">Actions</TableCell>}
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {loading ? <TableRow><TableCell colSpan={canEdit ? 13 : 12} align="center" sx={{ py: 4 }}><CircularProgress size={24} /></TableCell></TableRow>
-              : files.length === 0 ? <TableRow><TableCell colSpan={canEdit ? 13 : 12} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No files found</Typography></TableCell></TableRow>
+            {loading ? <TableRow><TableCell colSpan={13} align="center" sx={{ py: 4 }}><CircularProgress size={24} /></TableCell></TableRow>
+              : files.length === 0 ? <TableRow><TableCell colSpan={13} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No files found</Typography></TableCell></TableRow>
               : files.map(f => (
                 <TableRow key={f.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/files/${f.id}`)}>
                   <TableCell><Typography variant="body2" fontWeight={600} color="primary.main">{f.file_id}</Typography></TableCell>
@@ -319,16 +343,19 @@ export default function FilesPage() {
                   <TableCell><Typography variant="body2">{f.assessment_year || '-'}</Typography></TableCell>
                   <TableCell><Typography variant="body2">{f.financial_year || '-'}</Typography></TableCell>
                   <TableCell><StatusChip status={f.status} /></TableCell>
-                  <TableCell><Typography variant="body2">{(f.cabinet as { cabinet_name: string } | undefined)?.cabinet_name ?? '-'}</Typography></TableCell>
+                  <TableCell><Typography variant="body2">{(f.cabinet as { cabinet_name: string; cabinet_number?: string } | undefined) ? ((f.cabinet as { cabinet_number?: string }).cabinet_number ? `Cabinet ${(f.cabinet as { cabinet_number?: string }).cabinet_number}` : (f.cabinet as { cabinet_name: string }).cabinet_name) : '-'}</Typography></TableCell>
                   <TableCell><Typography variant="body2">{f.shelf || '-'}</Typography></TableCell>
                   <TableCell><Typography variant="body2">{(f.current_holder as { full_name: string } | undefined)?.full_name ?? '-'}</Typography></TableCell>
                   <TableCell><Typography variant="body2">{f.last_movement_date ? format(new Date(f.last_movement_date), 'dd MMM yy') : '-'}</Typography></TableCell>
-                  {canEdit && (
-                    <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title="Edit"><IconButton size="small" onClick={() => openEdit(f)}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title="Delete"><IconButton size="small" color="error" onClick={() => setDeleteDialog({ open: true, file: f })}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
-                    </TableCell>
-                  )}
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                    <Tooltip title="View"><IconButton size="small" onClick={() => { setViewFileId(f.id); setViewOpen(true); }}><VisibilityIcon fontSize="small" /></IconButton></Tooltip>
+                    {canEdit && (
+                      <>
+                        <Tooltip title="Edit"><IconButton size="small" onClick={() => openEdit(f)}><EditIcon fontSize="small" /></IconButton></Tooltip>
+                        <Tooltip title="Delete"><IconButton size="small" color="error" onClick={() => setDeleteDialog({ open: true, file: f })}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                      </>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
           </TableBody>
@@ -381,9 +408,9 @@ export default function FilesPage() {
               </TextField>
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField select label="Cabinet" value={form.cabinet_id} onChange={e => setForm(p => ({ ...p, cabinet_id: e.target.value }))} fullWidth size="small">
-                <MenuItem value="">-- None --</MenuItem>
-                {cabinets.map(c => <MenuItem key={c.id} value={c.id}>{c.cabinet_name}</MenuItem>)}
+              <TextField select label="Cabinet *" value={form.cabinet_id} onChange={e => setForm(p => ({ ...p, cabinet_id: e.target.value }))} fullWidth size="small" required error={!form.cabinet_id && !!error}>
+                <MenuItem value="">-- Select Cabinet --</MenuItem>
+                {cabinets.map(c => <MenuItem key={c.id} value={c.id}>{c.cabinet_number ? `Cabinet ${c.cabinet_number}` : c.cabinet_name}{c.cabinet_name && c.cabinet_number && c.cabinet_name !== `Cabinet ${c.cabinet_number}` ? ` — ${c.cabinet_name}` : ''}</MenuItem>)}
               </TextField>
             </Grid>
             <Grid size={4}>
@@ -423,6 +450,8 @@ export default function FilesPage() {
         onConfirm={handleDelete}
         onCancel={() => setDeleteDialog({ open: false, file: null })}
       />
+
+      <FileViewDialog open={viewOpen} fileId={viewFileId} onClose={() => setViewOpen(false)} />
     </Box>
   );
 }

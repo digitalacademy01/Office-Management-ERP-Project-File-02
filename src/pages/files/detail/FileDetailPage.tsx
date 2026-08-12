@@ -25,6 +25,19 @@ import StatusChip from '../../../components/common/StatusChip';
 import { useAuth } from '../../../contexts/AuthContext';
 import { format, isPast } from 'date-fns';
 
+function InfoCard({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5, height: '100%' }}>
+      <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.2, display: 'block' }}>
+        {label}
+      </Typography>
+      <Typography variant="body2" fontWeight={500} sx={{ wordBreak: 'break-word' }}>
+        {value || '-'}
+      </Typography>
+    </Paper>
+  );
+}
+
 export default function FileDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -42,11 +55,11 @@ export default function FileDetailPage() {
     setLoading(true);
     const [fileRes, movRes] = await Promise.all([
       supabase.from('physical_files')
-        .select('*, client:clients(client_name,client_id), cabinet:cabinets(cabinet_name), current_holder:employees(full_name)')
+        .select('*, client:clients(client_name,client_id), cabinet:cabinets(cabinet_name,cabinet_number), current_holder:employees(full_name)')
         .eq('id', id)
         .maybeSingle(),
       supabase.from('file_movements')
-        .select('*, taken_by:employees(full_name), received_by:employees(full_name)')
+        .select('*, taken_by:employees(full_name), received_by:employees(full_name), returned_by:employees(full_name)')
         .eq('file_id', id)
         .eq('is_deleted', false)
         .order('created_at', { ascending: false }),
@@ -73,9 +86,16 @@ export default function FileDetailPage() {
     );
   }
 
+  const cabinetLabel = (() => {
+    const cab = file.cabinet as { cabinet_name: string; cabinet_number?: string } | undefined;
+    if (!cab) return null;
+    if (cab.cabinet_number) return `Cabinet ${cab.cabinet_number}`;
+    return cab.cabinet_name;
+  })();
+
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
         <IconButton onClick={() => navigate('/files')} size="small"><ArrowBackIcon /></IconButton>
         <Typography variant="h5" fontWeight={700} color="primary.main" sx={{ fontSize: { xs: '1.25rem', md: '1.5rem' } }}>
           {file.file_name}
@@ -92,64 +112,82 @@ export default function FileDetailPage() {
 
         <Box sx={{ p: 3 }}>
           {tab === 0 && (
-            <Grid container spacing={3}>
-              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="overline" color="text.secondary">File Number</Typography>
-                  <Typography variant="body1" fontWeight={500}>{file.file_number || '-'}</Typography>
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="overline" color="text.secondary">Client</Typography>
-                  <Typography variant="body1" fontWeight={500}>{(file.client as { client_name: string } | undefined)?.client_name ?? '-'}</Typography>
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="overline" color="text.secondary">Status</Typography>
-                  <Box sx={{ mt: 0.5 }}><StatusChip status={file.status} /></Box>
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="overline" color="text.secondary">Cabinet</Typography>
-                  <Typography variant="body1" fontWeight={500}>{(file.cabinet as { cabinet_name: string } | undefined)?.cabinet_name ?? '-'}</Typography>
-                  {file.shelf && <Typography variant="caption" color="text.secondary">Shelf {file.shelf}</Typography>}
-                  {file.drawer && <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>Drawer {file.drawer}</Typography>}
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="overline" color="text.secondary">Current Holder</Typography>
-                  <Typography variant="body1" fontWeight={500}>{(file.current_holder as { full_name: string } | undefined)?.full_name ?? 'In office'}</Typography>
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="overline" color="text.secondary">Last Movement</Typography>
-                  <Typography variant="body1" fontWeight={500}>{file.last_movement_date ? format(new Date(file.last_movement_date), 'dd MMM yyyy HH:mm') : 'Never'}</Typography>
-                </Paper>
-              </Grid>
-              {file.remarks && (
-                <Grid size={12}>
-                  <Paper variant="outlined" sx={{ p: 2 }}>
-                    <Typography variant="overline" color="text.secondary">Remarks</Typography>
-                    <Typography variant="body2">{file.remarks}</Typography>
+            <Box>
+              {/* FILE INFORMATION */}
+              <Typography variant="subtitle2" color="primary.main" sx={{ mb: 1, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: '0.75rem' }}>
+                File Information
+              </Typography>
+              <Grid container spacing={1.5} sx={{ mb: 3 }}>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}><InfoCard label="File ID" value={file.file_id} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}><InfoCard label="File Name" value={file.file_name} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}><InfoCard label="File Number" value={file.file_number} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}><InfoCard label="File Subject" value={file.file_subject} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                  <InfoCard label="Client" value={(file.client as { client_name: string } | undefined)?.client_name} />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                  <Paper variant="outlined" sx={{ p: 1.5, height: '100%' }}>
+                    <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.2, display: 'block' }}>Status</Typography>
+                    <Box sx={{ mt: 0.5 }}><StatusChip status={file.status} /></Box>
                   </Paper>
                 </Grid>
-              )}
-              <Grid size={12}>
-                <Divider sx={{ my: 1 }} />
-                <Button
-                  variant="contained"
-                  startIcon={<SwapHorizIcon />}
-                  onClick={() => navigate('/movements')}
-                >
-                  Go to Movement Register
-                </Button>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}><InfoCard label="Assessment Year" value={file.assessment_year} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 4 }}><InfoCard label="Financial Year" value={file.financial_year} /></Grid>
               </Grid>
-            </Grid>
+
+              {/* PHYSICAL LOCATION */}
+              <Typography variant="subtitle2" color="primary.main" sx={{ mb: 1, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: '0.75rem' }}>
+                Physical Location
+              </Typography>
+              <Grid container spacing={1.5} sx={{ mb: 3 }}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <InfoCard label="Cabinet" value={cabinetLabel ?? 'Cabinet Not Assigned'} />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}><InfoCard label="Shelf" value={file.shelf} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}><InfoCard label="Drawer" value={file.drawer} /></Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}><InfoCard label="Rack" value={file.rack} /></Grid>
+              </Grid>
+
+              {/* CURRENT STATUS */}
+              <Typography variant="subtitle2" color="primary.main" sx={{ mb: 1, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: '0.75rem' }}>
+                Current Status
+              </Typography>
+              <Grid container spacing={1.5} sx={{ mb: 3 }}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <InfoCard label="Current Holder" value={(file.current_holder as { full_name: string } | undefined)?.full_name ?? 'In office'} />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <InfoCard label="Last Moved" value={file.last_movement_date ? format(new Date(file.last_movement_date), 'dd MMM yyyy HH:mm') : 'Never'} />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <InfoCard label="Created Date" value={format(new Date(file.created_at), 'dd MMM yyyy HH:mm')} />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <InfoCard label="Updated Date" value={format(new Date(file.updated_at), 'dd MMM yyyy HH:mm')} />
+                </Grid>
+              </Grid>
+
+              {/* REMARKS */}
+              {file.remarks && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" color="primary.main" sx={{ mb: 1, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: '0.75rem' }}>
+                    Remarks
+                  </Typography>
+                  <Paper variant="outlined" sx={{ p: 1.5 }}>
+                    <Typography variant="body2">{file.remarks}</Typography>
+                  </Paper>
+                </Box>
+              )}
+
+              <Divider sx={{ my: 1 }} />
+              <Button
+                variant="contained"
+                startIcon={<SwapHorizIcon />}
+                onClick={() => navigate('/movements')}
+              >
+                Go to Movement Register
+              </Button>
+            </Box>
           )}
 
           {tab === 1 && (
